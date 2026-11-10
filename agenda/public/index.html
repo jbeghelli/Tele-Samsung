@@ -28,6 +28,7 @@ html,body{margin:0;height:100%;background:#0f1115;color:#e8ebf0;font-family:Aria
 .en{font-size:2.3vh;line-height:1.15;word-wrap:break-word;overflow:hidden}
 .more{font-size:1.9vh;color:#8b93a1;text-align:center}
 #msg{position:fixed;left:0;right:0;bottom:0;padding:1vh 2vw;font-size:2.2vh;background:#7a2530;color:#fff;display:none}
+#keybox{display:none;position:fixed;left:50%;top:40%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);background:#1a1d24;border:.3vh solid #4da3ff;border-radius:1.5vh;padding:3vh 3vw;font-size:3vh;text-align:center;z-index:9}#keybox input{font-size:3vh;margin:2vh 1vw;padding:1vh;width:20vw}#keybox button{font-size:3vh;padding:1vh 2vw}
 #hint{font-size:1.8vh;color:#5d6573;margin-top:.6vh;text-align:center;height:2.4vh;line-height:2.4vh}
 </style>
 </head>
@@ -38,6 +39,7 @@ html,body{margin:0;height:100%;background:#0f1115;color:#e8ebf0;font-family:Aria
   <div id="hint">◀ ▶ cambiar semana &nbsp;·&nbsp; OK = hoy</div>
 </div>
 <div id="msg"></div>
+<div id="keybox"><div>Escribe la clave de acceso</div><input id="keyin" type="password"><button id="keyok">Entrar</button></div>
 <script src="vendor/ical.min.js"></script>
 <script src="config.js"></script>
 <script>
@@ -108,18 +110,28 @@ html,body{margin:0;height:100%;background:#0f1115;color:#e8ebf0;font-family:Aria
     x.open('GET', url, true);
     x.onreadystatechange = function () {
       if (x.readyState !== 4) return;
-      if (x.status === 200) cb(null, x.responseText); else cb(new Error('HTTP ' + x.status));
+      if (x.status === 200) cb(null, x.responseText); else { var er = new Error(x.status === 401 ? 'clave incorrecta' : 'HTTP ' + x.status); er.status = x.status; cb(er); }
     };
     x.onerror = function () { cb(new Error('sin conexión')); };
     x.timeout = 20000; x.ontimeout = x.onerror;
     x.send();
   }
+  var memKey = '';
   function accessKey() {
     var m = /[#&]key=([^&]+)/.exec(location.hash);
     try {
       if (m) { localStorage.setItem('agenda_key', decodeURIComponent(m[1])); location.hash = ''; }
-      return localStorage.getItem('agenda_key') || '';
-    } catch (e) { return m ? decodeURIComponent(m[1]) : ''; }
+      return localStorage.getItem('agenda_key') || memKey;
+    } catch (e) { return memKey || (m ? decodeURIComponent(m[1]) : ''); }
+  }
+  function askKey() {
+    if ($('keybox').style.display === 'block') return;
+    $('keybox').style.display = 'block'; $('keyin').focus();
+  }
+  function saveKey() {
+    memKey = $('keyin').value;
+    try { localStorage.setItem('agenda_key', memKey); } catch (e) {}
+    $('keybox').style.display = 'none'; loadAll();
   }
 
   function loadAll() {
@@ -128,9 +140,8 @@ html,body{margin:0;height:100%;background:#0f1115;color:#e8ebf0;font-family:Aria
     function done() { if (--pending === 0) { render(); var errs = []; for (var k in state.errors) if (state.errors[k]) errs.push(k + ': ' + state.errors[k]); showMsg(errs.length ? 'Sin datos de ' + errs.join(' · ') : ''); } }
     CFG.calendars.forEach(function (c) {
       if (DEMO) { state.events[c.id] = demoEvents(c.id); state.errors[c.id] = ''; return done(); }
-      if (!CFG.workerUrl) { state.errors[c.id] = 'falta workerUrl en config.js'; return done(); }
-      get(CFG.workerUrl + '/ics/' + encodeURIComponent(c.id) + (key ? '?key=' + encodeURIComponent(key) : ''), function (err, text) {
-        if (err) { state.errors[c.id] = err.message; return done(); }
+            get((CFG.workerUrl || '') + '/ics/' + encodeURIComponent(c.id) + (key ? '?key=' + encodeURIComponent(key) : ''), function (err, text) {
+        if (err) { state.errors[c.id] = err.message; if (err.status === 401) askKey(); return done(); }
         try { state.events[c.id] = parseICS(text, c.id, from, to); state.errors[c.id] = ''; }
         catch (e) { state.errors[c.id] = 'calendario ilegible'; }
         done();
@@ -196,6 +207,8 @@ html,body{margin:0;height:100%;background:#0f1115;color:#e8ebf0;font-family:Aria
     else if (k === 13) { state.weekStart = weekStartOf(new Date()); render(); }
   });
 
+  $('keyok').onclick = saveKey;
+  $('keyin').onkeydown = function (e) { if (e.keyCode === 13) saveKey(); e.stopPropagation(); };
   state.weekStart = weekStartOf(new Date());
   loadAll();
   setInterval(function () { loadAll(); }, Math.max(1, CFG.refreshMinutes) * 60000);

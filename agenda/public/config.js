@@ -1,7 +1,7 @@
 // Configuración pública (aquí NO van enlaces secretos de Google).
 // Los enlaces iCal viven como secretos en el Worker (ver worker/README.md).
 window.AGENDA_CONFIG = {
-  // URL de tu Worker, sin barra final. Ej: "https://agenda.tuusuario.workers.dev"
+  // Vacío = los calendarios se piden al mismo sitio donde está la página (lo normal).
   workerUrl: "",
   // Calendarios a mostrar. "id" debe coincidir con el secreto del Worker (CAL_<ID en mayúsculas>).
   calendars: [
