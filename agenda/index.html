@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agenda</title>
+<style>
+html,body{margin:0;height:100%;background:#0f1115;color:#e8ebf0;font-family:Arial,Helvetica,sans-serif;overflow:hidden}
+#app{box-sizing:border-box;height:100%;display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;padding:1.6vh 1.4vw}
+#head{display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;-webkit-justify-content:space-between;justify-content:space-between;margin-bottom:1.2vh}
+#title{font-size:3.6vh;font-weight:bold}
+#sub{font-size:2.2vh;color:#8b93a1;margin-left:1vw}
+#legend{font-size:2.2vh}
+#legend span{margin-left:1.4vw;white-space:nowrap}
+#legend i{display:inline-block;width:1.6vh;height:1.6vh;border-radius:50%;margin-right:.6vw;vertical-align:middle}
+#grid{-webkit-flex:1;flex:1;display:-webkit-flex;display:flex;min-height:0}
+.day{-webkit-flex:1;flex:1;min-width:0;margin:0 .35vw;background:#1a1d24;border-radius:1.2vh;display:-webkit-flex;display:flex;-webkit-flex-direction:column;flex-direction:column;overflow:hidden}
+.day.today{background:#222a38;border:.3vh solid #4da3ff;margin-top:-.3vh;margin-bottom:-.3vh}
+.dh{padding:1vh .8vw;border-bottom:1px solid #2c313c;text-align:center}
+.dn{font-size:2.2vh;color:#8b93a1;text-transform:uppercase;letter-spacing:.1em}
+.dd{font-size:4.2vh;font-weight:bold}
+.day.today .dd{color:#4da3ff}
+.ev-list{-webkit-flex:1;flex:1;overflow:hidden;padding:.6vh .5vw}
+.ev{border-left:.7vh solid #888;background:rgba(255,255,255,.06);border-radius:.7vh;padding:.6vh .6vw;margin-bottom:.7vh}
+.ev.allday{background:rgba(255,255,255,.14);font-weight:bold}
+.ev.past{opacity:.4}
+.et{font-size:1.9vh;color:#aab2c0}
+.en{font-size:2.3vh;line-height:1.15;word-wrap:break-word;overflow:hidden}
+.more{font-size:1.9vh;color:#8b93a1;text-align:center}
+#msg{position:fixed;left:0;right:0;bottom:0;padding:1vh 2vw;font-size:2.2vh;background:#7a2530;color:#fff;display:none}
+#hint{font-size:1.8vh;color:#5d6573;margin-top:.6vh;text-align:center;height:2.4vh;line-height:2.4vh}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="head"><div><span id="title"></span><span id="sub"></span></div><div id="legend"></div></div>
+  <div id="grid"></div>
+  <div id="hint">◀ ▶ cambiar semana &nbsp;·&nbsp; OK = hoy</div>
+</div>
+<div id="msg"></div>
+<script src="vendor/ical.min.js"></script>
+<script src="config.js"></script>
+<script>
+(function () {
+  var CFG = window.AGENDA_CONFIG;
+  var DEMO = /[?&]demo/.test(location.search);
+  var DAYS = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  var MONTHS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  var MAXEV = 7;
+  var state = { weekStart: null, events: {}, errors: {} };
+  var $ = function (id) { return document.getElementById(id); };
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+  function weekStartOf(d) {
+    var s = startOfDay(d), diff = (s.getDay() - CFG.weekStartsOn + 7) % 7;
+    return addDays(s, -diff);
+  }
+  function hhmm(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+
+  function showMsg(t) { var m = $('msg'); m.textContent = t || ''; m.style.display = t ? 'block' : 'none'; }
+
+  // ---------- ICS -> eventos ----------
+  function parseICS(text, calId, from, to) {
+    var out = [];
+    var comp = new ICAL.Component(ICAL.parse(text));
+    var tzs = comp.getAllSubcomponents('vtimezone');
+    for (var i = 0; i < tzs.length; i++) {
+      var tz = new ICAL.Timezone(tzs[i]);
+      ICAL.TimezoneService.register(tz.tzid, tz);
+    }
+    var vevs = comp.getAllSubcomponents('vevent'), masters = {}, exceptions = [], list = [];
+    for (i = 0; i < vevs.length; i++) {
+      var ev = new ICAL.Event(vevs[i]);
+      if (ev.isRecurrenceException()) exceptions.push(ev);
+      else { list.push(ev); masters[ev.uid] = ev; }
+    }
+    for (i = 0; i < exceptions.length; i++) {
+      if (masters[exceptions[i].uid]) masters[exceptions[i].uid].relateException(exceptions[i]);
+      else list.push(exceptions[i]);
+    }
+    function push(ev, s, e) {
+      var allDay = s.isDate;
+      var sd = s.toJSDate(), ed = e ? e.toJSDate() : sd;
+      if (allDay) { sd = new Date(s.year, s.month - 1, s.day); ed = e ? new Date(e.year, e.month - 1, e.day) : addDays(sd, 1); }
+      if (ed <= from || sd >= to) { if (!(ed.getTime() === sd.getTime() && sd >= from && sd < to)) return; }
+      out.push({ cal: calId, title: ev.summary || '(sin título)', start: sd, end: ed, allDay: allDay });
+    }
+    for (i = 0; i < list.length; i++) {
+      ev = list[i];
+      if (ev.isRecurring()) {
+        var it = ev.iterator(), n, guard = 0;
+        while ((n = it.next()) && guard++ < 2000) {
+          var d = ev.getOccurrenceDetails(n);
+          if (d.startDate.toJSDate() >= to) break;
+          push(d.item, d.startDate, d.endDate);
+        }
+      } else push(ev, ev.startDate, ev.endDate);
+    }
+    return out;
+  }
+
+  // ---------- red ----------
+  function get(url, cb) {
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      if (x.status === 200) cb(null, x.responseText); else cb(new Error('HTTP ' + x.status));
+    };
+    x.onerror = function () { cb(new Error('sin conexión')); };
+    x.timeout = 20000; x.ontimeout = x.onerror;
+    x.send();
+  }
+  function accessKey() {
+    var m = /[#&]key=([^&]+)/.exec(location.hash);
+    try {
+      if (m) { localStorage.setItem('agenda_key', decodeURIComponent(m[1])); location.hash = ''; }
+      return localStorage.getItem('agenda_key') || '';
+    } catch (e) { return m ? decodeURIComponent(m[1]) : ''; }
+  }
+
+  function loadAll() {
+    var from = addDays(startOfDay(new Date()), -35), to = addDays(startOfDay(new Date()), 120);
+    var pending = CFG.calendars.length, key = accessKey();
+    function done() { if (--pending === 0) { render(); var errs = []; for (var k in state.errors) if (state.errors[k]) errs.push(k + ': ' + state.errors[k]); showMsg(errs.length ? 'Sin datos de ' + errs.join(' · ') : ''); } }
+    CFG.calendars.forEach(function (c) {
+      if (DEMO) { state.events[c.id] = demoEvents(c.id); state.errors[c.id] = ''; return done(); }
+      if (!CFG.workerUrl) { state.errors[c.id] = 'falta workerUrl en config.js'; return done(); }
+      get(CFG.workerUrl + '/ics/' + encodeURIComponent(c.id) + (key ? '?key=' + encodeURIComponent(key) : ''), function (err, text) {
+        if (err) { state.errors[c.id] = err.message; return done(); }
+        try { state.events[c.id] = parseICS(text, c.id, from, to); state.errors[c.id] = ''; }
+        catch (e) { state.errors[c.id] = 'calendario ilegible'; }
+        done();
+      });
+    });
+  }
+
+  function demoEvents(id) {
+    var t = startOfDay(new Date()), h = function (d, hh, mm) { return new Date(t.getFullYear(), t.getMonth(), t.getDate() + d, hh, mm || 0); }, r = [];
+    if (id === 'javier') {
+      r.push({cal:id,title:'Reunión de equipo',start:h(0,9,30),end:h(0,10,30)},{cal:id,title:'Almuerzo con cliente',start:h(0,13),end:h(0,14,30)},
+        {cal:id,title:'Dentista',start:h(1,16),end:h(1,17)},{cal:id,title:'Revisión mensual',start:h(2,11),end:h(2,12)},
+        {cal:id,title:'Vuelo a Santiago',start:h(4,7,15),end:h(4,9)},{cal:id,title:'Cumpleaños de mamá',start:h(5,0),end:h(6,0),allDay:true});
+    } else {
+      r.push({cal:id,title:'Yoga',start:h(0,18),end:h(0,19)},{cal:id,title:'Apoderados colegio',start:h(1,19),end:h(1,20,30)},
+        {cal:id,title:'Peluquería',start:h(2,10),end:h(2,11)},{cal:id,title:'Cena con amigas',start:h(3,20,30),end:h(3,23)},
+        {cal:id,title:'Feria de Pascua',start:h(5,0),end:h(6,0),allDay:true},{cal:id,title:'Pilates',start:h(0,8),end:h(0,9)});
+    }
+    return r;
+  }
+
+  // ---------- render ----------
+  function calColor(id) { for (var i = 0; i < CFG.calendars.length; i++) if (CFG.calendars[i].id === id) return CFG.calendars[i].color; return '#888'; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function eventsOn(day) {
+    var next = addDays(day, 1), res = [];
+    for (var id in state.events) {
+      var arr = state.events[id];
+      for (var i = 0; i < arr.length; i++) {
+        var e = arr[i];
+        if (e.start < next && (e.end > day || (e.end.getTime() === e.start.getTime() && e.start >= day))) res.push(e);
+      }
+    }
+    res.sort(function (a, b) { return (b.allDay ? 1 : 0) - (a.allDay ? 1 : 0) || a.start - b.start; });
+    return res;
+  }
+
+  function render() {
+    var ws = state.weekStart, today = startOfDay(new Date()), now = new Date(), html = '', we = addDays(ws, 6);
+    var t = DAYS[ws.getDay()].substr(0, 3) + ' ' + ws.getDate() + ' ' + MONTHS[ws.getMonth()];
+    $('title').textContent = (ws.getMonth() === we.getMonth() ? ws.getDate() + ' – ' + we.getDate() + ' de ' + MONTHS[we.getMonth()] : ws.getDate() + ' ' + MONTHS[ws.getMonth()] + ' – ' + we.getDate() + ' ' + MONTHS[we.getMonth()]) + ' ' + we.getFullYear();
+    $('sub').textContent = DEMO ? 'modo demostración' : '';
+    var lg = ''; CFG.calendars.forEach(function (c) { lg += '<span><i style="background:' + c.color + '"></i>' + esc(c.name) + '</span>'; });
+    $('legend').innerHTML = lg;
+    for (var i = 0; i < 7; i++) {
+      var d = addDays(ws, i), evs = eventsOn(d), isToday = sameDay(d, today), items = '';
+      for (var j = 0; j < evs.length && j < MAXEV; j++) {
+        var e = evs[j], time = e.allDay ? 'Todo el día' : hhmm(e.start) + (e.end > e.start ? ' – ' + hhmm(e.end) : '');
+        var past = !e.allDay && e.end <= now && isToday;
+        items += '<div class="ev' + (e.allDay ? ' allday' : '') + (past ? ' past' : '') + '" style="border-left-color:' + calColor(e.cal) + '"><div class="et">' + time + '</div><div class="en">' + esc(e.title) + '</div></div>';
+      }
+      if (evs.length > MAXEV) items += '<div class="more">+' + (evs.length - MAXEV) + ' más</div>';
+      html += '<div class="day' + (isToday ? ' today' : '') + '"><div class="dh"><div class="dn">' + DAYS[d.getDay()].substr(0, 3) + '</div><div class="dd">' + d.getDate() + '</div></div><div class="ev-list">' + items + '</div></div>';
+    }
+    $('grid').innerHTML = html;
+  }
+
+  document.addEventListener('keydown', function (e) {
+    var k = e.keyCode;
+    if (k === 37) { state.weekStart = addDays(state.weekStart, -7); render(); }
+    else if (k === 39) { state.weekStart = addDays(state.weekStart, 7); render(); }
+    else if (k === 13) { state.weekStart = weekStartOf(new Date()); render(); }
+  });
+
+  state.weekStart = weekStartOf(new Date());
+  loadAll();
+  setInterval(function () { loadAll(); }, Math.max(1, CFG.refreshMinutes) * 60000);
+  setInterval(render, 60000); // mantiene "hoy" y eventos pasados al día
+})();
+</script>
+</body>
+</html>
