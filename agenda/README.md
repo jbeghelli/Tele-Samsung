@@ -12,3 +12,5 @@ Secretos (solo en Cloudflare > Settings > Variables and Secrets, tipo Secret; NU
 
 Control con el remoto: ◀ ▶ cambia de semana, OK vuelve a hoy. La primera vez la agenda pide la clave en pantalla.
 `/?demo` muestra datos de ejemplo.
+
+Despliegue automático: cada cambio en `main` dentro de `agenda/` se publica en Cloudflare.
